@@ -5,16 +5,16 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
 # Copia solução e csproj para cache de restore
-COPY Freelaverse.sln ./
-COPY Freelaverse.API/Freelaverse.API.csproj Freelaverse.API/
-COPY Freelaverse.Data/Freelaverse.Data.csproj Freelaverse.Data/
-COPY Freelaverse.Domain/Freelaverse.Domain.csproj Freelaverse.Domain/
-COPY Freelaverse.Services/Freelaverse.Services.csproj Freelaverse.Services/
+COPY src/Freelaverse.sln ./
+COPY src/Freelaverse.API/Freelaverse.API.csproj Freelaverse.API/
+COPY src/Freelaverse.Data/Freelaverse.Data.csproj Freelaverse.Data/
+COPY src/Freelaverse.Domain/Freelaverse.Domain.csproj Freelaverse.Domain/
+COPY src/Freelaverse.Services/Freelaverse.Services.csproj Freelaverse.Services/
 
 RUN dotnet restore Freelaverse.sln
 
 # Copia o restante do código e publica a API
-COPY . .
+COPY src/ ./
 RUN dotnet publish Freelaverse.API/Freelaverse.API.csproj -c Release -o /app/publish
 
 # =========================
