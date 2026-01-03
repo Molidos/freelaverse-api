@@ -64,6 +64,37 @@ public class ServiceService : IServiceService
         await _context.SaveChangesAsync();
         return true;
     }
+
+    public async Task<(IEnumerable<Service> Items, int TotalCount)> GetByCategoryPagedAsync(IEnumerable<string>? categories, int page, int pageSize)
+    {
+        var query = _context.Services
+            .AsNoTracking()
+            .Where(s => s.Status.ToLower() == "pendente")
+            .Where(s => s.CreatedAt >= DateTimeOffset.UtcNow.AddMonths(-1));
+
+        if (categories != null && categories.Any())
+        {
+            var catSet = categories
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .Select(c => c.ToLower())
+                .ToHashSet();
+
+            if (catSet.Count > 0)
+            {
+                query = query.Where(s => catSet.Contains(s.Category.ToLower()));
+            }
+        }
+
+        query = query.OrderByDescending(s => s.CreatedAt);
+
+        var total = await query.CountAsync();
+        var items = await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync();
+
+        return (items, total);
+    }
 }
 
 

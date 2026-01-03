@@ -9,7 +9,6 @@ public class User : IAuditable
     [Required, MaxLength(30)]
     public string Email {get; set;} = string.Empty;
     public string Password {get; set;} = string.Empty;
-    public int Credits {get; set;} = 0;
 
     public UserType UserType { get; set;}
     [Required, MaxLength(120)]

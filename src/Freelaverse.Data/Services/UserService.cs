@@ -2,6 +2,7 @@ using FreelaverseApi.Data;
 using FreelaverseApi.Models;
 using Freelaverse.Services.Interfaces;
 using Microsoft.EntityFrameworkCore;
+using BCrypt.Net;
 
 namespace Freelaverse.Data.Services;
 
@@ -16,16 +17,48 @@ public class UserService : IUserService
 
     public async Task<IEnumerable<User>> GetAllAsync()
     {
-        return await _context.Users.AsNoTracking().ToListAsync();
+        return await _context.Users
+            .Include(u => u.UserProfessionalArea)
+                .ThenInclude(upa => upa.ProfessionalArea)
+            .Include(u => u.ClientServices)
+                .ThenInclude(s => s.ProfessionalService)
+            .Include(u => u.ProfessionalService)
+                .ThenInclude(ps => ps.Service)
+            .AsNoTracking()
+            .ToListAsync();
     }
 
     public async Task<User?> GetByIdAsync(Guid id)
     {
-        return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id);
+        return await _context.Users
+            .Include(u => u.UserProfessionalArea)
+                .ThenInclude(upa => upa.ProfessionalArea)
+            .Include(u => u.ClientServices)
+                .ThenInclude(s => s.ProfessionalService)
+            .Include(u => u.ProfessionalService)
+                .ThenInclude(ps => ps.Service)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Id == id);
+    }
+
+    public async Task<User?> GetByEmailAsync(string email)
+    {
+        return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email);
+    }
+
+    public async Task<User?> GetByEmailAndPasswordAsync(string email, string password)
+    {
+        var user = await _context.Users.AsNoTracking()
+            .FirstOrDefaultAsync(u => u.Email == email);
+
+        if (user is null) return null;
+
+        return BCrypt.Net.BCrypt.Verify(password, user.Password) ? user : null;
     }
 
     public async Task<User> CreateAsync(User user)
     {
+        user.Password = BCrypt.Net.BCrypt.HashPassword(user.Password);
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
         return user;
@@ -40,7 +73,6 @@ public class UserService : IUserService
         existing.UserName = user.UserName;
         existing.Email = user.Email;
         existing.Password = user.Password;
-        existing.Credits = user.Credits;
         existing.UserType = user.UserType;
         existing.ProfileImageUrl = user.ProfileImageUrl;
 
@@ -54,6 +86,12 @@ public class UserService : IUserService
 
         // Contato
         existing.Phone = user.Phone;
+
+        // Senha (se enviada)
+        if (!string.IsNullOrWhiteSpace(user.Password))
+        {
+            existing.Password = BCrypt.Net.BCrypt.HashPassword(user.Password);
+        }
 
         await _context.SaveChangesAsync();
         return existing;

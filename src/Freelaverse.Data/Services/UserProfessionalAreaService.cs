@@ -34,6 +34,10 @@ public class UserProfessionalAreaService : IUserProfessionalAreaService
 
     public async Task<UserProfessionalAreas> CreateAsync(UserProfessionalAreas relation)
     {
+        // evitar que navegações instanciadas gerem inserts indesejados
+        relation.User = null;
+        relation.ProfessionalArea = null;
+
         _context.UserProfessionalArea.Add(relation);
         await _context.SaveChangesAsync();
         return relation;
@@ -46,6 +50,9 @@ public class UserProfessionalAreaService : IUserProfessionalAreaService
 
         existing.UserId = relation.UserId;
         existing.ProfessionalAreaId = relation.ProfessionalAreaId;
+
+        existing.User = null;
+        existing.ProfessionalArea = null;
 
         await _context.SaveChangesAsync();
         return existing;

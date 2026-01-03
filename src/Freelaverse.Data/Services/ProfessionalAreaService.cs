@@ -26,6 +26,7 @@ public class ProfessionalAreaService : IProfessionalAreaService
 
     public async Task<ProfessionalAreas> CreateAsync(ProfessionalAreas area)
     {
+        area.Id = Guid.NewGuid();
         _context.ProfessionalArea.Add(area);
         await _context.SaveChangesAsync();
         return area;
