@@ -33,13 +33,27 @@ jobs:
         with:
           ssh-private-key: ${{ env.SSH_KEY }}
 
-      - name: Deploy backend
+      - name: Deploy backend + migrate
         run: |
-          ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" << 'EOF'
-            set -e
+          ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" << EOF
+            set -euo pipefail
+
+            PROFILE="${{ steps.vars.outputs.profile }}"
+            BRANCH="${{ steps.vars.outputs.branch }}"
+
             cd /home/jony/freelaverse/backend
-            git pull origin ${{ steps.vars.outputs.branch }}
-            cd ..
-            cd infra
-            docker compose --profile ${{ steps.vars.outputs.profile }} --env-file .env.${{ steps.vars.outputs.profile }} up --build -d
+            git fetch --all
+            git checkout "$BRANCH"
+            git pull origin "$BRANCH"
+
+            cd /home/jony/freelaverse/infra
+
+            # 1) garante que o Postgres do ambiente está de pé
+            docker compose --profile "$PROFILE" --env-file ".env.$PROFILE" up -d "postgres_$PROFILE"
+
+            # 2) aplica migrations (roda 1x e sai; se não tiver pendências, termina sem mudar nada)
+            docker compose --profile "$PROFILE" --env-file ".env.$PROFILE" run --rm "migrator_$PROFILE"
+
+            # 3) sobe/atualiza tudo do ambiente (API + nginx + web etc)
+            docker compose --profile "$PROFILE" --env-file ".env.$PROFILE" up --build -d
           EOF
