@@ -41,5 +41,5 @@ jobs:
             git pull origin ${{ steps.vars.outputs.branch }}
             cd ..
             cd infra
-            docker compose --profile ${{ steps.vars.outputs.profile }} up --build -d
+            docker compose --profile ${{ steps.vars.outputs.profile }} --env-file .env.${{ steps.vars.outputs.profile }} up --build -d
           EOF
