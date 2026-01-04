@@ -36,16 +36,23 @@ public class AuthController : ControllerBase
     }
 
     [HttpGet("me")]
-    [Authorize]
-    public async Task<ActionResult<User>> Me()
+    public async Task<ActionResult> Me()
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
                   ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub);
-        if (string.IsNullOrWhiteSpace(sub) || !Guid.TryParse(sub, out var userId))
-            return Unauthorized();
+
+        if (string.IsNullOrWhiteSpace(sub))
+        {
+            return Unauthorized(new { message = "Token de autenticação não fornecido ou inválido." });
+        }
+
+        if (!Guid.TryParse(sub, out var userId))
+        {
+            return Unauthorized(new { message = "O token fornecido possui um formato inválido." });
+        }
 
         var user = await _userService.GetByIdAsync(userId);
-        if (user is null) return NotFound();
+        if (user is null) return NotFound(new { message = "Usuário não encontrado." });
 
         // Projeção sem campos sensíveis/desnecessários
         var result = new
