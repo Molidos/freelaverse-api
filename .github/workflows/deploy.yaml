@@ -40,5 +40,6 @@ jobs:
             cd /home/jony/freelaverse/backend
             git pull origin ${{ steps.vars.outputs.branch }}
             cd ..
+            cd infra
             docker compose --profile ${{ steps.vars.outputs.profile }} up --build -d
           EOF
