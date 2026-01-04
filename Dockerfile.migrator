@@ -5,9 +5,9 @@ WORKDIR /workspace
 # Copia somente o diretório src (onde está a solution)
 COPY src/ ./src/
 
-# Instala o dotnet-ef
+# Instala o dotnet-ef (versão fixa) e garante PATH em runtime
 RUN dotnet tool install --global dotnet-ef --version 8.0.0
-ENV PATH="$PATH:/root/.dotnet/tools"
+ENV PATH="/root/.dotnet/tools:${PATH}"
 
 # Entra na pasta onde está o .sln
 WORKDIR /workspace/src
@@ -16,4 +16,5 @@ WORKDIR /workspace/src
 ENTRYPOINT ["sh", "-lc"]
 
 # Roda migrations e encerra
-CMD ["dotnet ef database update --project Freelaverse.Data --startup-project Freelaverse.API"]
+# (uso caminho absoluto do executável pra ser 100% infalível)
+CMD ["/root/.dotnet/tools/dotnet-ef database update --project Freelaverse.Data --startup-project Freelaverse.API"]
