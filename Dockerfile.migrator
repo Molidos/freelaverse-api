@@ -6,7 +6,7 @@ WORKDIR /workspace
 COPY src/ ./src/
 
 # Instala o dotnet-ef
-RUN dotnet tool install --global dotnet-ef
+RUN dotnet tool install --global dotnet-ef --version 8.0.0
 ENV PATH="$PATH:/root/.dotnet/tools"
 
 # Entra na pasta onde está o .sln
