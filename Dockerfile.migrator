@@ -1,10 +1,19 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0
 
-WORKDIR /src
+WORKDIR /workspace
+
+# Copia somente o diretório src (onde está a solution)
 COPY src/ ./src/
 
+# Instala o dotnet-ef
 RUN dotnet tool install --global dotnet-ef
 ENV PATH="$PATH:/root/.dotnet/tools"
 
+# Entra na pasta onde está o .sln
+WORKDIR /workspace/src
+
+# Garante que NUNCA vai iniciar a API: entrypoint é shell
 ENTRYPOINT ["sh", "-lc"]
-CMD ["dotnet ef database update --project src/Freelaverse.Data --startup-project src/Freelaverse.API"]
+
+# Roda migrations e encerra
+CMD ["dotnet ef database update --project Freelaverse.Data --startup-project Freelaverse.API"]
