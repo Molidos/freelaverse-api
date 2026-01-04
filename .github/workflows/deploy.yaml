@@ -14,19 +14,20 @@ jobs:
       SSH_PORT: ${{ secrets.SSH_PORT }}
       SSH_USER: ${{ secrets.SSH_USER }}
       SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      PROJECT_PATH: /home/jony/freelaverse/backend
 
     steps:
       - name: Detect branch
         id: vars
+        shell: bash
         run: |
           BRANCH="${GITHUB_REF##*/}"
           if [ "$BRANCH" = "develop" ]; then PROFILE="dev";
           elif [ "$BRANCH" = "homolog" ]; then PROFILE="hml";
           elif [ "$BRANCH" = "main" ]; then PROFILE="prod";
-          else echo "Branch inválida"; exit 1; fi
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-          echo "profile=$PROFILE" >> $GITHUB_OUTPUT
+          else echo "Branch inválida: $BRANCH"; exit 1; fi
+
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "profile=$PROFILE" >> "$GITHUB_OUTPUT"
 
       - name: Start SSH agent
         uses: webfactory/ssh-agent@v0.9.0
@@ -34,26 +35,37 @@ jobs:
           ssh-private-key: ${{ env.SSH_KEY }}
 
       - name: Deploy backend + migrate
+        shell: bash
         run: |
-          ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" << EOF
-            set -euo pipefail
+          set -euo pipefail
 
-            PROFILE="${{ steps.vars.outputs.profile }}"
-            BRANCH="${{ steps.vars.outputs.branch }}"
+          BRANCH="${{ steps.vars.outputs.branch }}"
+          PROFILE="${{ steps.vars.outputs.profile }}"
 
-            cd /home/jony/freelaverse/backend
-            git fetch --all
-            git checkout "$BRANCH"
-            git pull origin "$BRANCH"
+          if [ -z "$BRANCH" ] || [ -z "$PROFILE" ]; then
+            echo "BRANCH ou PROFILE vazio! BRANCH='$BRANCH' PROFILE='$PROFILE'"
+            exit 1
+          fi
 
-            cd /home/jony/freelaverse/infra
+          ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "BRANCH='$BRANCH' PROFILE='$PROFILE' bash -lc '
+              set -euo pipefail
 
-            # 1) garante que o Postgres do ambiente está de pé
-            docker compose --profile "$PROFILE" --env-file ".env.$PROFILE" up -d "postgres_$PROFILE"
+              echo \"Deploy branch=$BRANCH profile=$PROFILE\"
 
-            # 2) aplica migrations (roda 1x e sai; se não tiver pendências, termina sem mudar nada)
-            docker compose --profile "$PROFILE" --env-file ".env.$PROFILE" run --rm "migrator_$PROFILE"
+              cd /home/jony/freelaverse/backend
+              git fetch --all
+              git checkout \"$BRANCH\"
+              git pull origin \"$BRANCH\"
 
-            # 3) sobe/atualiza tudo do ambiente (API + nginx + web etc)
-            docker compose --profile "$PROFILE" --env-file ".env.$PROFILE" up --build -d
-          EOF
+              cd /home/jony/freelaverse/infra
+
+              # 1) garante postgres do ambiente
+              docker compose --profile \"$PROFILE\" --env-file \".env.$PROFILE\" up -d \"postgres_$PROFILE\"
+
+              # 2) aplica migrations (job)
+              docker compose --profile \"$PROFILE\" --env-file \".env.$PROFILE\" run --rm \"migrator_$PROFILE\"
+
+              # 3) sobe o resto
+              docker compose --profile \"$PROFILE\" --env-file \".env.$PROFILE\" up --build -d
+            '"
