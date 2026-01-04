@@ -25,7 +25,6 @@ jobs:
           elif [ "$BRANCH" = "homolog" ]; then PROFILE="hml";
           elif [ "$BRANCH" = "main" ]; then PROFILE="prod";
           else echo "Branch inválida: $BRANCH"; exit 1; fi
-
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "profile=$PROFILE" >> "$GITHUB_OUTPUT"
 
@@ -42,30 +41,42 @@ jobs:
           BRANCH="${{ steps.vars.outputs.branch }}"
           PROFILE="${{ steps.vars.outputs.profile }}"
 
-          if [ -z "$BRANCH" ] || [ -z "$PROFILE" ]; then
-            echo "BRANCH ou PROFILE vazio! BRANCH='$BRANCH' PROFILE='$PROFILE'"
-            exit 1
-          fi
-
           ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
             "BRANCH='$BRANCH' PROFILE='$PROFILE' bash -lc '
               set -euo pipefail
+              echo \"Deploy branch=\$BRANCH profile=\$PROFILE\"
 
-              echo \"Deploy branch=$BRANCH profile=$PROFILE\"
-
+              # Atualiza backend (onde está Dockerfile.migrator)
               cd /home/jony/freelaverse/backend
               git fetch --all
-              git checkout \"$BRANCH\"
-              git pull origin \"$BRANCH\"
+              git checkout \"\$BRANCH\"
+              git pull origin \"\$BRANCH\"
 
+              # Vai pra infra (onde está o docker-compose.yaml)
               cd /home/jony/freelaverse/infra
 
-              # 1) garante postgres do ambiente
-              docker compose --profile \"$PROFILE\" --env-file \".env.$PROFILE\" up -d \"postgres_$PROFILE\"
+              echo \"--- pwd ---\"
+              pwd
+              echo \"--- ls ---\"
+              ls -la
+              echo \"--- grep migrator_prod no docker-compose ---\"
+              grep -n \"migrator_prod\" -n docker-compose.yaml || true
+              echo \"--- grep Dockerfile.migrator no docker-compose ---\"
+              grep -n \"Dockerfile.migrator\" docker-compose.yaml || true
 
-              # 2) aplica migrations (job)
-              docker compose --profile \"$PROFILE\" --env-file \".env.$PROFILE\" run --rm \"migrator_$PROFILE\"
+              # Mostra o compose resolvido (pra provar qual dockerfile ele vai usar)
+              echo \"--- docker compose config (trecho migrator_prod) ---\"
+              docker compose -f docker-compose.yaml --profile \"\$PROFILE\" --env-file \".env.\$PROFILE\" config | sed -n \"/migrator_prod:/,/^[^ ]/p\" || true
 
-              # 3) sobe o resto
-              docker compose --profile \"$PROFILE\" --env-file \".env.$PROFILE\" up --build -d
+              # 1) garante postgres
+              docker compose -f docker-compose.yaml --profile \"\$PROFILE\" --env-file \".env.\$PROFILE\" up -d \"postgres_\$PROFILE\"
+
+              # 2) build FORÇADO do migrator (sem cache)
+              docker compose -f docker-compose.yaml --profile \"\$PROFILE\" --env-file \".env.\$PROFILE\" build --no-cache \"migrator_\$PROFILE\"
+
+              # 3) roda migrations
+              docker compose -f docker-compose.yaml --profile \"\$PROFILE\" --env-file \".env.\$PROFILE\" run --rm --no-deps \"migrator_\$PROFILE\"
+
+              # 4) sobe o stack
+              docker compose -f docker-compose.yaml --profile \"\$PROFILE\" --env-file \".env.\$PROFILE\" up --build -d
             '"
