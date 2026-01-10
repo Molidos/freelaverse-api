@@ -8,212 +8,295 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.Authorization;
 using FreelaverseApi.Data;
+using Stripe;
 
-namespace Freelaverse.API.Controllers;
-
-[ApiController]
-[Route("api/[controller]")]
-public class AuthController : ControllerBase
+namespace Freelaverse.API.Controllers
 {
-    private readonly IUserService _userService;
-    private readonly IConfiguration _configuration;
-    private readonly IProfessionalAreaService _professionalAreaService;
-    private readonly IUserProfessionalAreaService _userProfessionalAreaService;
-    private readonly AppDbContext _db;
-
-    public AuthController(
-        IUserService userService,
-        IConfiguration configuration,
-        IProfessionalAreaService professionalAreaService,
-        IUserProfessionalAreaService userProfessionalAreaService,
-        AppDbContext db)
+    [ApiController]
+    [Route("api/[controller]")]
+    public class AuthController : ControllerBase
     {
-        _userService = userService;
-        _configuration = configuration;
-        _professionalAreaService = professionalAreaService;
-        _userProfessionalAreaService = userProfessionalAreaService;
-        _db = db;
-    }
+        private readonly IUserService _userService;
+        private readonly IConfiguration _configuration;
+        private readonly IProfessionalAreaService _professionalAreaService;
+        private readonly IUserProfessionalAreaService _userProfessionalAreaService;
+        private readonly IUserSubscriptionService _userSubscriptionService;
+        private readonly AppDbContext _db;
 
-    [HttpGet("me")]
-    public async Task<ActionResult> Me()
-    {
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
-                  ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub);
-
-        if (string.IsNullOrWhiteSpace(sub))
+        public AuthController(
+            IUserService userService,
+            IConfiguration configuration,
+            IProfessionalAreaService professionalAreaService,
+            IUserProfessionalAreaService userProfessionalAreaService,
+            IUserSubscriptionService userSubscriptionService,
+            AppDbContext db)
         {
-            return Unauthorized(new { message = "Token de autenticação não fornecido ou inválido." });
+            _userService = userService;
+            _configuration = configuration;
+            _professionalAreaService = professionalAreaService;
+            _userProfessionalAreaService = userProfessionalAreaService;
+            _userSubscriptionService = userSubscriptionService;
+            _db = db;
         }
 
-        if (!Guid.TryParse(sub, out var userId))
+        [HttpGet("me")]
+        public async Task<ActionResult> Me()
         {
-            return Unauthorized(new { message = "O token fornecido possui um formato inválido." });
-        }
+            var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                      ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub);
 
-        var user = await _userService.GetByIdAsync(userId);
-        if (user is null) return NotFound(new { message = "Usuário não encontrado." });
-
-        // Projeção sem campos sensíveis/desnecessários
-        var result = new
-        {
-            userName = user.UserName,
-            email = user.Email,
-            userType = user.UserType,
-            profileImageUrl = user.ProfileImageUrl,
-            phone = user.Phone,
-            clientServices = user.ClientServices?
-                .Select(s => new
-                {
-                    title = s.Title,
-                    description = s.Description,
-                    category = s.Category,
-                    urgency = s.Urgency,
-                    status = s.Status,
-                    address = s.Address,
-                    professionalService = s.ProfessionalService?
-                        .Select(ps => new
-                        {
-                            professionalId = ps.ProfessionalId,
-                            serviceId = ps.ServiceId
-                        })
-                        .Cast<object>()
-                        .ToList() ?? new List<object>()
-                })
-                .Cast<object>()
-                .ToList() ?? new List<object>(),
-            professionalService = user.ProfessionalService?
-                .Select(ps => new
-                {
-                    professionalId = ps.ProfessionalId,
-                    service = new
-                    {
-                        title = ps.Service.Title,
-                        description = ps.Service.Description,
-                        category = ps.Service.Category,
-                        urgency = ps.Service.Urgency,
-                        status = ps.Service.Status,
-                        address = ps.Service.Address
-                    }
-                })
-                .Cast<object>()
-                .ToList() ?? new List<object>(),
-            userProfessionalArea = user.UserProfessionalArea?
-                .Select(upa => new
-                {
-                    professionalArea = new
-                    {
-                        name = upa.ProfessionalArea.Name
-                    }
-                })
-                .Cast<object>()
-                .ToList() ?? new List<object>()
-        };
-
-        return Ok(result);
-    }
-
-    [HttpPost("register")]
-    public async Task<ActionResult<object>> Register([FromBody] RegisterRequest request)
-    {
-        // verificar se já existe
-        var existing = await _userService.GetByEmailAsync(request.Email);
-        if (existing != null)
-            return Conflict("Email já cadastrado.");
-
-        if (request.UserType != (int)UserType.Client && request.UserType != (int)UserType.Professional)
-            return BadRequest("userType inválido. Use 1 para Client, 2 para Professional.");
-
-        // validar áreas informadas
-        var areaIds = request.UserProfessionalArea?.Distinct().ToList() ?? new List<Guid>();
-        foreach (var areaId in areaIds)
-        {
-            var area = await _professionalAreaService.GetByIdAsync(areaId);
-            if (area is null)
-                return BadRequest($"Área informada não existe: {areaId}");
-        }
-
-        var newUser = new User
-        {
-            UserName = request.UserName,
-            Email = request.Email,
-            Password = request.Password,
-            ProfileImageUrl = request.ProfileImageUrl,
-            UserType = (UserType)request.UserType,
-            Street = request.Street,
-            Number = request.Number,
-            Complement = request.Complement,
-            ZipCode = request.ZipCode,
-            City = request.City,
-            State = request.State,
-            Phone = request.Phone
-        };
-
-        using var transaction = await _db.Database.BeginTransactionAsync();
-
-        try
-        {
-            var created = await _userService.CreateAsync(newUser);
-
-            // criar relações UserProfessionalArea
-            foreach (var areaId in areaIds)
+            if (string.IsNullOrWhiteSpace(sub))
             {
-                await _userProfessionalAreaService.CreateAsync(new UserProfessionalAreas
-                {
-                    UserId = created.Id,
-                    ProfessionalAreaId = areaId
-                });
+                return Unauthorized(new { message = "Token de autenticação não fornecido ou inválido." });
             }
 
-            await transaction.CommitAsync();
+            if (!Guid.TryParse(sub, out var userId))
+            {
+                return Unauthorized(new { message = "O token fornecido possui um formato inválido." });
+            }
 
-            var token = GenerateJwtToken(created);
-            return Ok(new { token, user = new { created.Id, created.Email, created.UserName, created.UserType, created.ProfileImageUrl } });
+            var user = await _userService.GetByIdAsync(userId);
+            if (user is null) return NotFound(new { message = "Usuário não encontrado." });
+
+            // Projeção sem campos sensíveis/desnecessários
+            var subscriptionInfo = await _userSubscriptionService.GetByUserIdAsync(user.Id);
+            var hasSubscription = subscriptionInfo is not null && !string.IsNullOrWhiteSpace(subscriptionInfo.StripeSubscriptionId);
+
+            if (!hasSubscription && !string.IsNullOrWhiteSpace(subscriptionInfo?.StripeCustomerId))
+            {
+                subscriptionInfo = await RefreshSubscriptionFromStripe(user, subscriptionInfo);
+                hasSubscription = subscriptionInfo is not null && !string.IsNullOrWhiteSpace(subscriptionInfo.StripeSubscriptionId);
+            }
+
+            var result = new
+            {
+                userName = user.UserName,
+                email = user.Email,
+                userType = user.UserType,
+                credits = user.Credits,
+                subscription = new
+                {
+                    hasSubscription,
+                    stripeCustomerId = subscriptionInfo?.StripeCustomerId,
+                    stripeSubscriptionId = subscriptionInfo?.StripeSubscriptionId,
+                    stripePriceId = subscriptionInfo?.StripePriceId,
+                    stripeCurrentPeriodEnd = subscriptionInfo?.StripeCurrentPeriodEnd
+                },
+                profileImageUrl = user.ProfileImageUrl,
+                phone = user.Phone,
+                clientServices = user.ClientServices?
+                    .Select(s => new
+                    {
+                        id = s.Id,
+                        title = s.Title,
+                        description = s.Description,
+                        category = s.Category,
+                        urgency = s.Urgency,
+                        status = s.Status,
+                        address = s.Address,
+                        createdAt = s.CreatedAt,
+                        updatedAt = s.UpdatedAt,
+                        professionalService = s.ProfessionalService?
+                            .Select(ps => new
+                            {
+                                professionalId = ps.ProfessionalId,
+                                serviceId = ps.ServiceId
+                            })
+                            .Cast<object>()
+                            .ToList() ?? new List<object>()
+                    })
+                    .Cast<object>()
+                    .ToList() ?? new List<object>(),
+                professionalService = user.ProfessionalService?
+                    .Select(ps => new
+                    {
+                        professionalId = ps.ProfessionalId,
+                        service = new
+                        {
+                            id = ps.Service.Id,
+                            title = ps.Service.Title,
+                            description = ps.Service.Description,
+                            category = ps.Service.Category,
+                            urgency = ps.Service.Urgency,
+                            status = ps.Service.Status,
+                            address = ps.Service.Address,
+                            QuantProfessionals = ps.Service.QuantProfessionals,
+                            createdAt = ps.Service.CreatedAt,
+                            updatedAt = ps.Service.UpdatedAt
+                        }
+                    })
+                    .Cast<object>()
+                    .ToList() ?? new List<object>(),
+                userProfessionalArea = user.UserProfessionalArea?
+                    .Select(upa => new
+                    {
+                        professionalArea = new
+                        {
+                            name = upa.ProfessionalArea.Name
+                        }
+                    })
+                    .Cast<object>()
+                    .ToList() ?? new List<object>(),
+
+            };
+
+            return Ok(result);
         }
-        catch
+
+        [HttpPost("register")]
+        public async Task<ActionResult<object>> Register([FromBody] RegisterRequest request)
         {
-            await transaction.RollbackAsync();
-            throw;
+            // verificar se já existe
+            var existing = await _userService.GetByEmailAsync(request.Email);
+            if (existing != null)
+                return Conflict("Email já cadastrado.");
+
+            if (request.UserType != (int)UserType.Client && request.UserType != (int)UserType.Professional)
+                return BadRequest("userType inválido. Use 1 para Client, 2 para Professional.");
+
+            // validar áreas informadas
+            var areaIds = request.UserProfessionalArea?.Distinct().ToList() ?? new List<Guid>();
+            if (request.UserType == (int)UserType.Professional && areaIds.Count == 0)
+                return BadRequest("Profissional deve informar ao menos uma área de atuação (userProfessionalArea).");
+
+            foreach (var areaId in areaIds)
+            {
+                var area = await _professionalAreaService.GetByIdAsync(areaId);
+                if (area is null)
+                    return BadRequest($"Área informada não existe: {areaId}");
+            }
+
+            var newUser = new User
+            {
+                UserName = request.UserName,
+                Email = request.Email,
+                Password = request.Password,
+                ProfileImageUrl = request.ProfileImageUrl,
+                UserType = (UserType)request.UserType,
+                Street = request.Street,
+                Number = request.Number,
+                Complement = request.Complement,
+                ZipCode = request.ZipCode,
+                City = request.City,
+                State = request.State,
+                Phone = request.Phone
+            };
+
+            using var transaction = await _db.Database.BeginTransactionAsync();
+
+            try
+            {
+                var created = await _userService.CreateAsync(newUser);
+
+                // criar relações UserProfessionalArea
+                foreach (var areaId in areaIds)
+                {
+                    await _userProfessionalAreaService.CreateAsync(new UserProfessionalAreas
+                    {
+                        UserId = created.Id,
+                        ProfessionalAreaId = areaId
+                    });
+                }
+
+                await transaction.CommitAsync();
+
+                var token = GenerateJwtToken(created);
+                return Ok(new { token, user = new { created.Id, created.Email, created.UserName, created.UserType, created.ProfileImageUrl } });
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+
         }
 
-    }
-
-    [HttpPost("login")]
-    public async Task<ActionResult<object>> Login([FromBody] LoginRequest request)
-    {
-        var user = await _userService.GetByEmailAndPasswordAsync(request.Email, request.Password);
-        if (user is null)
+        [HttpPost("login")]
+        public async Task<ActionResult<object>> Login([FromBody] LoginRequest request)
         {
-            return Unauthorized();
+            var user = await _userService.GetByEmailAndPasswordAsync(request.Email, request.Password);
+            if (user is null)
+            {
+                return Unauthorized();
+            }
+
+            var subscription = await _userSubscriptionService.GetByUserIdAsync(user.Id);
+            var token = GenerateJwtToken(user);
+            return Ok(new
+            {
+                token,
+                user = new
+                {
+                    user.Id,
+                    user.Email,
+                    user.UserName,
+                    user.UserType,
+                    user.ProfileImageUrl
+                },
+                subscription = new
+                {
+                    hasSubscription = subscription is not null && !string.IsNullOrWhiteSpace(subscription.StripeSubscriptionId),
+                    stripeCustomerId = subscription?.StripeCustomerId,
+                    stripeSubscriptionId = subscription?.StripeSubscriptionId,
+                    stripePriceId = subscription?.StripePriceId,
+                    stripeCurrentPeriodEnd = subscription?.StripeCurrentPeriodEnd
+                }
+            });
         }
 
-        var token = GenerateJwtToken(user);
-        return Ok(new { token, user = new { user.Id, user.Email, user.UserName, user.UserType, user.ProfileImageUrl } });
-    }
-
-    private string GenerateJwtToken(FreelaverseApi.Models.User user)
-    {
-        var jwtSection = _configuration.GetSection("Jwt");
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSection["Key"]!));
-
-        var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var claims = new[]
+        private string GenerateJwtToken(FreelaverseApi.Models.User user)
         {
-            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new Claim(JwtRegisteredClaimNames.Email, user.Email),
-            new Claim("name", user.UserName)
-        };
+            var jwtSection = _configuration.GetSection("Jwt");
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSection["Key"]!));
 
-        var token = new JwtSecurityToken(
-            issuer: jwtSection["Issuer"],
-            audience: jwtSection["Audience"],
-            claims: claims,
-            expires: DateTime.UtcNow.AddHours(1),
-            signingCredentials: creds
-        );
+            var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+            var claims = new[]
+            {
+                new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+                new Claim(JwtRegisteredClaimNames.Email, user.Email),
+                new Claim("name", user.UserName)
+            };
 
-        return new JwtSecurityTokenHandler().WriteToken(token);
+            var token = new JwtSecurityToken(
+                issuer: jwtSection["Issuer"],
+                audience: jwtSection["Audience"],
+                claims: claims,
+                expires: DateTime.UtcNow.AddHours(1),
+                signingCredentials: creds
+            );
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+        private async Task<UserSubscription?> RefreshSubscriptionFromStripe(FreelaverseApi.Models.User user, UserSubscription? subscriptionInfo)
+        {
+            var stripeSection = _configuration.GetSection("Stripe");
+            var secretKey = _configuration["STRIPE_API_KEY"] ?? stripeSection["SecretKey"];
+            if (string.IsNullOrWhiteSpace(secretKey)) return subscriptionInfo;
+            if (subscriptionInfo is null || string.IsNullOrWhiteSpace(subscriptionInfo.StripeCustomerId)) return subscriptionInfo;
+
+            StripeConfiguration.ApiKey = secretKey;
+            var subService = new SubscriptionService();
+
+            var list = await subService.ListAsync(new SubscriptionListOptions
+            {
+                Customer = subscriptionInfo.StripeCustomerId,
+                Status = "active",
+                Limit = 1
+            });
+
+            var active = list.Data.FirstOrDefault();
+            if (active is null) return subscriptionInfo;
+
+            var priceId = active.Items.Data.FirstOrDefault()?.Price?.Id ?? string.Empty;
+            var currentPeriodEnd = new DateTimeOffset(active.CurrentPeriodEnd);
+
+            return await _userSubscriptionService.UpsertFromWebhookAsync(
+                user.Id,
+                subscriptionInfo.StripeCustomerId,
+                active.Id,
+                priceId,
+                currentPeriodEnd);
+        }
     }
 }
-
-

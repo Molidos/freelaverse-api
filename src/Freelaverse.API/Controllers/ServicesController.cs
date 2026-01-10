@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Authorization;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
+using FreelaverseApi.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Freelaverse.API.Controllers;
 
@@ -12,10 +14,23 @@ namespace Freelaverse.API.Controllers;
 public class ServicesController : ControllerBase
 {
     private readonly IServiceService _serviceService;
+    private readonly IUserSubscriptionService _subscriptionService;
+    private readonly IUserService _userService;
+    private readonly IProfessionalServiceService _professionalServiceService;
+    private readonly AppDbContext _context;
 
-    public ServicesController(IServiceService serviceService)
+    public ServicesController(
+        IServiceService serviceService,
+        IUserSubscriptionService subscriptionService,
+        IUserService userService,
+        IProfessionalServiceService professionalServiceService,
+        AppDbContext context)
     {
         _serviceService = serviceService;
+        _subscriptionService = subscriptionService;
+        _userService = userService;
+        _professionalServiceService = professionalServiceService;
+        _context = context;
     }
 
     [HttpGet]
@@ -25,12 +40,93 @@ public class ServicesController : ControllerBase
         return Ok(services);
     }
 
+    [Authorize]
     [HttpGet("{id:guid}")]
-    public async Task<ActionResult<Service>> GetById(Guid id)
+    public async Task<ActionResult<object>> GetById(Guid id)
     {
-        var service = await _serviceService.GetByIdAsync(id);
+        var userId = GetUserId();
+        if (userId is null) return Unauthorized();
+
+        var user = await _userService.GetByIdAsync(userId.Value);
+        if (user is null || user.UserType != UserType.Professional)
+            return Forbid();
+
+        var service = await _serviceService.GetByIdWithClientAsync(id);
         if (service is null) return NotFound();
-        return Ok(service);
+
+        var subscription = await _subscriptionService.GetByUserIdAsync(userId.Value);
+        var hasSubscription = subscription is not null && !string.IsNullOrWhiteSpace(subscription.StripeSubscriptionId);
+
+        var alreadyUnlocked = await _context.ProfessionalServices
+            .AsNoTracking()
+            .AnyAsync(ps => ps.ServiceId == id && ps.ProfessionalId == userId.Value);
+
+        var includePhone = hasSubscription || alreadyUnlocked;
+
+        return Ok(ProjectService(service, includePhone));
+    }
+
+    [Authorize]
+    [HttpPost("{id:guid}/unlock")]
+    public async Task<ActionResult<object>> UnlockService(Guid id)
+    {
+        var userId = GetUserId();
+        if (userId is null) return Unauthorized();
+
+        var user = await _userService.GetByIdAsync(userId.Value);
+        if (user is null || user.UserType != UserType.Professional)
+            return Forbid();
+
+        var service = await _serviceService.GetByIdWithClientAsync(id);
+        if (service is null) return NotFound();
+
+        // Já desbloqueado?
+        var already = await _context.ProfessionalServices
+            .AsNoTracking()
+            .AnyAsync(ps => ps.ServiceId == id && ps.ProfessionalId == userId.Value);
+        if (already)
+            return Ok(new { message = "Pedido já desbloqueado.", service = ProjectService(service, includePhone: true) });
+
+        var subscription = await _subscriptionService.GetByUserIdAsync(userId.Value);
+        var hasSubscription = subscription is not null && !string.IsNullOrWhiteSpace(subscription.StripeSubscriptionId);
+
+        var hasCredits = user.Credits >= service.Value;
+
+        if (!hasSubscription && !hasCredits)
+            return BadRequest(new { error = "Você não é assinante e não possui créditos suficientes." });
+
+        // cria vínculo
+        await _professionalServiceService.CreateAsync(new ProfessionalService
+        {
+            ProfessionalId = userId.Value,
+            ServiceId = service.Id
+        });
+
+        // incrementa contagem e encerra se necessário
+        var trackedService = await _context.Services.FindAsync(service.Id);
+        if (trackedService is not null)
+        {
+            trackedService.QuantProfessionals += 1;
+            if (trackedService.QuantProfessionals >= 4)
+                trackedService.Status = "encerrado";
+        }
+
+        // debita créditos se não for assinante
+        if (!hasSubscription && hasCredits)
+        {
+            var trackedUser = await _context.Users.FindAsync(userId.Value);
+            if (trackedUser is not null)
+            {
+                trackedUser.Credits -= service.Value;
+                if (trackedUser.Credits < 0) trackedUser.Credits = 0;
+            }
+        }
+
+        await _context.SaveChangesAsync();
+
+        // retorna já com telefone liberado
+        var updatedService = await _serviceService.GetByIdWithClientAsync(id);
+        return Ok(ProjectService(updatedService!, includePhone: true));
     }
 
     [HttpPost]
@@ -64,7 +160,7 @@ public class ServicesController : ControllerBase
             pageSize,
             total,
             totalPages,
-            items
+            items = items.Select(s => ProjectService(s, includePhone: false))
         });
     }
 
@@ -82,6 +178,38 @@ public class ServicesController : ControllerBase
         var removed = await _serviceService.DeleteAsync(id);
         if (!removed) return NotFound();
         return NoContent();
+    }
+
+    private static object ProjectService(Service service, bool includePhone)
+    {
+        return new
+        {
+            service.Id,
+            service.Title,
+            service.Description,
+            service.Category,
+            service.Urgency,
+            service.Status,
+            service.Address,
+            service.CreatedAt,
+            service.UpdatedAt,
+            service.Value,
+            service.QuantProfessionals,
+            clientId = service.ClientId,
+            clientEmail = includePhone ? service.Client?.Email : null,
+            clientPhone = includePhone ? service.Client?.Phone : null
+        };
+    }
+
+    private Guid? GetUserId()
+    {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier)
+                  ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+
+        if (Guid.TryParse(sub, out var id))
+            return id;
+
+        return null;
     }
 }
 

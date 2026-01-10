@@ -15,6 +15,7 @@ public class AppDbContext : DbContext
     public DbSet<ProfessionalService> ProfessionalServices => Set<ProfessionalService>();
     public DbSet<UserProfessionalAreas> UserProfessionalArea => Set<UserProfessionalAreas>();
     public DbSet<ProfessionalAreas> ProfessionalArea => Set<ProfessionalAreas>();
+    public DbSet<UserSubscription> UserSubscriptions => Set<UserSubscription>();
 
     public override int SaveChanges()
     {
