@@ -7,6 +7,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.OpenApi.Models;
 using Stripe;
+using Freelaverse.API.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -65,6 +66,7 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 builder.Services.AddControllers();
+builder.Services.AddSignalR();
 builder.Services.AddAuthorization();
 builder.Services.AddHttpClient();
 
@@ -144,6 +146,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<PaymentsHub>("/hubs/payments");
 
 app.Run();
 

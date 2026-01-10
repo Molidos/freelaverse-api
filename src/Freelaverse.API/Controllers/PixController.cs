@@ -1,8 +1,12 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Mvc;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
+using Freelaverse.Services.Interfaces;
+using Freelaverse.API.Hubs;
 
 namespace Freelaverse.API.Controllers;
 
@@ -13,15 +17,21 @@ public class PixController : ControllerBase
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<PixController> _logger;
+    private readonly IUserService _userService;
+    private readonly IHubContext<PaymentsHub> _hubContext;
 
     public PixController(
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        ILogger<PixController> logger)
+        ILogger<PixController> logger,
+        IUserService userService,
+        IHubContext<PaymentsHub> hubContext)
     {
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
         _logger = logger;
+        _userService = userService;
+        _hubContext = hubContext;
     }
 
     [HttpPost]
@@ -128,6 +138,108 @@ public class PixController : ControllerBase
         // Apenas log para referência inicial.
         _logger.LogInformation("Webhook PagSeguro recebido: {Body}", body.ToString());
         return Ok(new { received = true });
+    }
+
+    /// <summary>
+    /// Webhook de confirmação de pagamento PIX (PagSeguro) para creditar o usuário.
+    /// Idempotência mínima: apenas processa quando status = PAID/CAPTURED e email está presente.
+    /// Futuramente podemos adicionar websocket/SignalR para notificar o frontend.
+    /// </summary>
+    [HttpPost("confirm")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ConfirmPix([FromBody] JsonElement body)
+    {
+        _logger.LogInformation("ConfirmPix payload: {Body}", body.ToString());
+
+        try
+        {
+            // Verifica status do pagamento
+            var status = body.TryGetProperty("charges", out var chargesElement)
+                && chargesElement.ValueKind == JsonValueKind.Array
+                && chargesElement.GetArrayLength() > 0
+                && chargesElement[0].TryGetProperty("status", out var statusProp)
+                ? statusProp.GetString()
+                : null;
+
+            if (!string.Equals(status, "PAID", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(status, "CAPTURED", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Pagamento ignorado - status não pago: {Status}", status);
+                return Ok(new { ignored = true, reason = "Status não pago" });
+            }
+
+            // Extrai email do cliente
+            var email = body.TryGetProperty("customer", out var customerElement)
+                && customerElement.TryGetProperty("email", out var emailProp)
+                ? emailProp.GetString()
+                : null;
+
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                _logger.LogWarning("Webhook sem email do cliente. Payload: {Body}", body.ToString());
+                return Ok(new { ignored = true, reason = "Email ausente" });
+            }
+
+            var user = await _userService.GetByEmailAsync(email);
+            if (user is null)
+            {
+                _logger.LogWarning("Usuário não encontrado para email {Email}", email);
+                return Ok(new { ignored = true, reason = "Usuário não encontrado" });
+            }
+
+            // Determina créditos a partir do nome do item (ex.: "1.000 créditos")
+            int creditsToAdd = 0;
+            if (body.TryGetProperty("items", out var itemsElement) &&
+                itemsElement.ValueKind == JsonValueKind.Array &&
+                itemsElement.GetArrayLength() > 0)
+            {
+                var name = itemsElement[0].TryGetProperty("name", out var nameProp)
+                    ? nameProp.GetString() ?? string.Empty
+                    : string.Empty;
+
+                var match = Regex.Match(name, @"\d+");
+                if (match.Success && int.TryParse(match.Value, out var parsed))
+                {
+                    creditsToAdd = parsed;
+                }
+            }
+
+            if (creditsToAdd <= 0)
+            {
+                _logger.LogWarning("Créditos não identificados no payload para email {Email}. Nenhuma alteração feita.", email);
+                return Ok(new { ignored = true, reason = "Créditos não identificados" });
+            }
+
+            var updated = await _userService.AddCreditsAsync(user.Id, creditsToAdd);
+            if (updated is null)
+            {
+                _logger.LogError("Falha ao creditar usuário {UserId}", user.Id);
+                return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Falha ao creditar usuário" });
+            }
+
+            // Notifica frontend via SignalR para o grupo do usuário
+            var group = PaymentsHub.GetGroup(email);
+            await _hubContext.Clients.Group(group).SendAsync("PixPaymentUpdated", new
+            {
+                email,
+                status = "paid",
+                creditsAdded = creditsToAdd,
+                totalCredits = updated.Credits
+            });
+
+            return Ok(new
+            {
+                message = "Pagamento PIX confirmado",
+                email,
+                creditsAdded = creditsToAdd,
+                totalCredits = updated.Credits
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao processar webhook de confirmação PIX");
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Erro ao processar webhook PIX" });
+        }
     }
 }
 
