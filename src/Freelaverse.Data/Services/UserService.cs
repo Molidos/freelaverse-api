@@ -97,6 +97,16 @@ public class UserService : IUserService
         return existing;
     }
 
+    public async Task<User?> AddCreditsAsync(Guid id, int creditsToAdd)
+    {
+        var existing = await _context.Users.FindAsync(id);
+        if (existing is null) return null;
+
+        existing.Credits += creditsToAdd;
+        await _context.SaveChangesAsync();
+        return existing;
+    }
+
     public async Task<bool> DeleteAsync(Guid id)
     {
         var entity = await _context.Users.FindAsync(id);

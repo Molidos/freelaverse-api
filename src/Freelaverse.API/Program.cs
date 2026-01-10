@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
 using Microsoft.OpenApi.Models;
+using Stripe;
+using Freelaverse.API.Hubs;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -64,7 +66,9 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 builder.Services.AddControllers();
+builder.Services.AddSignalR();
 builder.Services.AddAuthorization();
+builder.Services.AddHttpClient();
 
 // DbContext
 builder.Services.AddDbContext<FreelaverseApi.Data.AppDbContext>(options =>
@@ -79,6 +83,7 @@ builder.Services.AddScoped<IServiceService, ServiceService>();
 builder.Services.AddScoped<IProfessionalAreaService, ProfessionalAreaService>();
 builder.Services.AddScoped<IProfessionalServiceService, ProfessionalServiceService>();
 builder.Services.AddScoped<IUserProfessionalAreaService, UserProfessionalAreaService>();
+builder.Services.AddScoped<IUserSubscriptionService, UserSubscriptionService>();
 
 // Auth/JWT
 var jwtSection = builder.Configuration.GetSection("Jwt");
@@ -96,6 +101,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSection["Key"]!))
         };
     });
+
+// Stripe (prioriza env STRIPE_API_KEY; fallback para Stripe:SecretKey)
+var stripeSecret = builder.Configuration["STRIPE_API_KEY"]
+                  ?? builder.Configuration.GetValue<string>("Stripe:SecretKey");
+if (!string.IsNullOrWhiteSpace(stripeSecret))
+{
+    StripeConfiguration.ApiKey = stripeSecret;
+}
 
 var app = builder.Build();
 
@@ -133,6 +146,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<PaymentsHub>("/hubs/payments");
 
 app.Run();
 

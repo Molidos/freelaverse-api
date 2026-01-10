@@ -12,6 +12,8 @@ public class Service : IAuditable
     public string Urgency {get; set;} = string.Empty;//Urgência do serviço
     public string Status {get; set;} = string.Empty;//Status do serviço
     public string Address {get; set;} = string.Empty;//Endereço do serviço
+    public int Value { get; set; } = 150;//Valor do serviço
+    public int QuantProfessionals { get; set; } = 0;//Quantidade de profissionais que desbloquearam
     public Guid UserId {get; set;} = Guid.Empty;//ID do usuário que solicitou o serviço
     [JsonIgnore]
     public User? Client {get; set; }//Cliente que solicitou o serviço

@@ -10,6 +10,7 @@ public interface IUserService
     Task<User?> GetByEmailAndPasswordAsync(string email, string password);
     Task<User> CreateAsync(User user);
     Task<User?> UpdateAsync(Guid id, User user);
+    Task<User?> AddCreditsAsync(Guid id, int creditsToAdd);
     Task<bool> DeleteAsync(Guid id);
 }
 

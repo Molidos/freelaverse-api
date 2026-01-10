@@ -30,8 +30,20 @@ public class ServiceService : IServiceService
             .FirstOrDefaultAsync(s => s.Id == id);
     }
 
+    public async Task<Service?> GetByIdWithClientAsync(Guid id)
+    {
+        return await _context.Services
+            .Include(s => s.Client)
+            .Include(s => s.ProfessionalService)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == id);
+    }
+
     public async Task<Service> CreateAsync(Service service)
     {
+        if (service.Value <= 0) service.Value = 150;
+        service.QuantProfessionals = 0;
+
         _context.Services.Add(service);
         await _context.SaveChangesAsync();
         return service;
@@ -48,6 +60,7 @@ public class ServiceService : IServiceService
         existing.Urgency = service.Urgency;
         existing.Status = service.Status;
         existing.Address = service.Address;
+        if (service.Value > 0) existing.Value = service.Value;
         existing.UserId = service.UserId;
         existing.ClientId = service.ClientId;
 
