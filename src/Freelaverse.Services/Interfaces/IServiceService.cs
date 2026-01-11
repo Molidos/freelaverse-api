@@ -10,7 +10,7 @@ public interface IServiceService
     Task<Service> CreateAsync(Service service);
     Task<Service?> UpdateAsync(Guid id, Service service);
     Task<bool> DeleteAsync(Guid id);
-    Task<(IEnumerable<Service> Items, int TotalCount)> GetByCategoryPagedAsync(IEnumerable<string>? categories, int page, int pageSize);
+    Task<(IEnumerable<Service> Items, int TotalCount)> GetByCategoryPagedAsync(IEnumerable<string>? categories, int page, int pageSize, Guid? excludeProfessionalId = null);
 }
 
 

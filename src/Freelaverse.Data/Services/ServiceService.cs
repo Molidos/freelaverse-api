@@ -78,10 +78,11 @@ public class ServiceService : IServiceService
         return true;
     }
 
-    public async Task<(IEnumerable<Service> Items, int TotalCount)> GetByCategoryPagedAsync(IEnumerable<string>? categories, int page, int pageSize)
+    public async Task<(IEnumerable<Service> Items, int TotalCount)> GetByCategoryPagedAsync(IEnumerable<string>? categories, int page, int pageSize, Guid? excludeProfessionalId = null)
     {
         var query = _context.Services
             .AsNoTracking()
+            .Include(s => s.ProfessionalService)
             .Where(s => s.Status.ToLower() == "pendente")
             .Where(s => s.CreatedAt >= DateTimeOffset.UtcNow.AddMonths(-1));
 
@@ -96,6 +97,12 @@ public class ServiceService : IServiceService
             {
                 query = query.Where(s => catSet.Contains(s.Category.ToLower()));
             }
+        }
+
+        if (excludeProfessionalId.HasValue)
+        {
+            var pid = excludeProfessionalId.Value;
+            query = query.Where(s => !s.ProfessionalService.Any(ps => ps.ProfessionalId == pid));
         }
 
         query = query.OrderByDescending(s => s.CreatedAt);

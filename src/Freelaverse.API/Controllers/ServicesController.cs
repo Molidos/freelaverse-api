@@ -158,12 +158,16 @@ public class ServicesController : ControllerBase
         return CreatedAtAction(nameof(GetById), new { id = created.Id }, created);
     }
 
+    [Authorize]
     [HttpGet("search")]
     public async Task<ActionResult<object>> SearchByCategory([FromQuery] List<string>? categories, [FromQuery] int page = 1, [FromQuery] int pageSize = 10)
     {
         if (page < 1 || pageSize < 1) return BadRequest("page e pageSize devem ser maiores que zero.");
 
-        var (items, total) = await _serviceService.GetByCategoryPagedAsync(categories, page, pageSize);
+        var userId = GetUserId();
+        if (userId is null) return Unauthorized();
+
+        var (items, total) = await _serviceService.GetByCategoryPagedAsync(categories, page, pageSize, excludeProfessionalId: userId.Value);
         var totalPages = (int)Math.Ceiling((double)total / pageSize);
 
         return Ok(new
