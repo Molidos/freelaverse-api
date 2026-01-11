@@ -37,7 +37,9 @@ public class ServicesController : ControllerBase
     public async Task<ActionResult<IEnumerable<Service>>> GetAll()
     {
         var services = await _serviceService.GetAllAsync();
-        return Ok(services);
+        // Evita ciclos de serialização projetando somente os campos necessários
+        var result = services.Select(s => ProjectService(s, includePhone: false));
+        return Ok(result);
     }
 
     [Authorize]
