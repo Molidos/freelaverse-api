@@ -210,8 +210,9 @@ public class PixController : ControllerBase
                     ? nameProp.GetString() ?? string.Empty
                     : string.Empty;
 
-                var match = Regex.Match(name, @"\d+");
-                if (match.Success && int.TryParse(match.Value, out var parsed))
+                // Remove tudo que não for número para capturar "1.000" -> "1000"
+                var digits = Regex.Replace(name, "[^0-9]", "");
+                if (!string.IsNullOrWhiteSpace(digits) && int.TryParse(digits, out var parsed))
                 {
                     creditsToAdd = parsed;
                 }
