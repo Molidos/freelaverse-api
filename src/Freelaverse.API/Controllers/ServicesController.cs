@@ -18,19 +18,22 @@ public class ServicesController : ControllerBase
     private readonly IUserService _userService;
     private readonly IProfessionalServiceService _professionalServiceService;
     private readonly AppDbContext _context;
+    private readonly ILogger<ServicesController> _logger;
 
     public ServicesController(
         IServiceService serviceService,
         IUserSubscriptionService subscriptionService,
         IUserService userService,
         IProfessionalServiceService professionalServiceService,
-        AppDbContext context)
+        AppDbContext context,
+        ILogger<ServicesController> logger)
     {
         _serviceService = serviceService;
         _subscriptionService = subscriptionService;
         _userService = userService;
         _professionalServiceService = professionalServiceService;
         _context = context;
+        _logger = logger;
     }
 
     [HttpGet]
@@ -115,7 +118,7 @@ public class ServicesController : ControllerBase
                 if (trackedService.Value <= 0) trackedService.Value = cost; // corrige serviços antigos com valor 0
                 trackedService.QuantProfessionals += 1;
                 if (trackedService.QuantProfessionals >= 4)
-                    trackedService.Status = "encerrado";
+                    trackedService.Status = "finalizado";
             }
 
             // debita créditos se não for assinante
@@ -139,6 +142,73 @@ public class ServicesController : ControllerBase
         }
 
         // retorna já com telefone liberado
+        var updatedService = await _serviceService.GetByIdWithClientAsync(id);
+        return Ok(ProjectService(updatedService!, includePhone: true));
+    }
+
+    [Authorize]
+    [HttpPost("{id:guid}/exclusive")]
+    public async Task<ActionResult<object>> UnlockServiceExclusive(Guid id)
+    {
+        var userId = GetUserId();
+        if (userId is null) return Unauthorized();
+
+        var user = await _userService.GetByIdAsync(userId.Value);
+        if (user is null || user.UserType != UserType.Professional)
+            return Forbid();
+
+        var service = await _serviceService.GetByIdWithClientAsync(id);
+        if (service is null) return NotFound();
+
+        // Exclusividade só se ninguém desbloqueou ainda
+        if (service.QuantProfessionals > 0)
+            return BadRequest(new { error = "Exclusividade indisponível. Já existe profissional vinculado." });
+
+        var cost = service.Value;
+        if (user.Credits < cost)
+            return BadRequest(new { error = "Créditos insuficientes para exclusividade." });
+
+        // Já vinculado? (mesmo com 0 quant, evita duplicar)
+        var already = await _context.ProfessionalServices
+            .AsNoTracking()
+            .AnyAsync(ps => ps.ServiceId == id && ps.ProfessionalId == userId.Value);
+        if (already)
+            return Ok(new { message = "Exclusividade já garantida.", service = ProjectService(service, includePhone: true) });
+
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        try
+        {
+            await _professionalServiceService.CreateAsync(new ProfessionalService
+            {
+                ProfessionalId = userId.Value,
+                ServiceId = service.Id
+            });
+
+            var trackedService = await _context.Services.FindAsync(service.Id);
+            if (trackedService is not null)
+            {
+                if (trackedService.Value <= 0) trackedService.Value = cost;
+                trackedService.QuantProfessionals += 1;
+                trackedService.Status = "finalizado"; // retira da lista de disponíveis
+            }
+
+            var trackedUser = await _context.Users.FindAsync(userId.Value);
+            if (trackedUser is not null)
+            {
+                trackedUser.Credits -= cost;
+                if (trackedUser.Credits < 0) trackedUser.Credits = 0;
+            }
+
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync();
+            _logger.LogError(ex, "Erro ao conceder exclusividade no serviço {ServiceId} para usuário {UserId}", id, userId.Value);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = "Erro interno ao conceder exclusividade." });
+        }
+
         var updatedService = await _serviceService.GetByIdWithClientAsync(id);
         return Ok(ProjectService(updatedService!, includePhone: true));
     }
