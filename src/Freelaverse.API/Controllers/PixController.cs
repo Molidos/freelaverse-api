@@ -45,6 +45,19 @@ public class PixController : ControllerBase
 
         var notificationUrl = _configuration.GetValue<string>("PagSeguro:NotificationUrl");
 
+        // Catálogo fixo de pacotes (server-side para evitar manipulação de preço)
+        var packs = new Dictionary<string, (string Label, int Credits, int PriceCents)>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["pack1"] = ("1.000 créditos", 1000, /*4990*/100),
+            ["pack2"] = ("2.000 créditos", 2000, /*8990*/1000),
+            ["pack3"] = ("3.000 créditos", 3000, 11990)
+        };
+
+        if (string.IsNullOrWhiteSpace(request.PackId) || !packs.TryGetValue(request.PackId, out var pack))
+        {
+            return BadRequest(new { error = "Pacote inválido." });
+        }
+
         var payload = new
         {
             reference_id = $"pix-{Guid.NewGuid()}",
@@ -68,16 +81,16 @@ public class PixController : ControllerBase
             {
                 new
                 {
-                    name = request.Product,
-                    quantity = request.Quantity,
-                    unit_amount = request.UnitAmount
+                    name = pack.Label,
+                    quantity = 1,
+                    unit_amount = pack.PriceCents
                 }
             },
             qr_codes = new[]
             {
                 new
                 {
-                    amount = new { value = request.Price },
+                    amount = new { value = pack.PriceCents },
                     expiration_date = request.ExpirationDate
                 }
             },
@@ -121,7 +134,7 @@ public class PixController : ControllerBase
             var qrText = qrCodes[0].GetProperty("text").GetString();
             var qrLink = qrCodes[0].GetProperty("links")[0].GetProperty("href").GetString();
 
-            return Ok(new { qrText, qrLink });
+            return Ok(new { qrText, qrLink, packId = request.PackId, pack.Label, pack.Credits, pack.PriceCents });
         }
         catch (Exception ex)
         {
@@ -245,12 +258,9 @@ public class PixController : ControllerBase
 
 public class PixRequest
 {
+    public string PackId { get; set; } = string.Empty; // pack1, pack2, pack3...
     public string Name { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
-    public string Product { get; set; } = string.Empty;
-    public int Quantity { get; set; } = 1;
-    public int UnitAmount { get; set; } = 500; // valor em centavos
-    public int Price { get; set; } = 500; // valor em centavos para o QR
     public DateTime? ExpirationDate { get; set; }
     public string? TaxId { get; set; }
     public object? Address { get; set; }
