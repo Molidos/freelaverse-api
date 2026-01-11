@@ -13,17 +13,23 @@ var builder = WebApplication.CreateBuilder(args);
 
 // CORS 
 const string CorsPolicy = "DefaultCors";
+var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>() ??
+    new[]
+    {
+        "http://localhost:3000",
+        "http://localhost:5002",
+        "https://freelaverse.com",
+        "https://www.freelaverse.com",
+        "https://api.freelaverse.com"
+    };
 builder.Services.AddCors(options =>
 {
     options.AddPolicy(CorsPolicy, policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
-            .AllowAnyMethod();
-        // policy.WithOrigins("http://localhost:3000") // ajuste aqui
-        //       .AllowAnyHeader()
-        //       .AllowAnyMethod()
-        //       .AllowCredentials();
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 
