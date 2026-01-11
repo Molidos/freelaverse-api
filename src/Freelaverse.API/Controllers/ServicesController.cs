@@ -90,39 +90,51 @@ public class ServicesController : ControllerBase
         var subscription = await _subscriptionService.GetByUserIdAsync(userId.Value);
         var hasSubscription = subscription is not null && !string.IsNullOrWhiteSpace(subscription.StripeSubscriptionId);
 
-        var hasCredits = user.Credits >= service.Value;
+        var cost = service.Value;
+        var hasCredits = user.Credits >= cost;
 
         if (!hasSubscription && !hasCredits)
             return BadRequest(new { error = "Você não é assinante e não possui créditos suficientes." });
 
-        // cria vínculo
-        await _professionalServiceService.CreateAsync(new ProfessionalService
+        await using var tx = await _context.Database.BeginTransactionAsync();
+        try
         {
-            ProfessionalId = userId.Value,
-            ServiceId = service.Id
-        });
-
-        // incrementa contagem e encerra se necessário
-        var trackedService = await _context.Services.FindAsync(service.Id);
-        if (trackedService is not null)
-        {
-            trackedService.QuantProfessionals += 1;
-            if (trackedService.QuantProfessionals >= 4)
-                trackedService.Status = "encerrado";
-        }
-
-        // debita créditos se não for assinante
-        if (!hasSubscription && hasCredits)
-        {
-            var trackedUser = await _context.Users.FindAsync(userId.Value);
-            if (trackedUser is not null)
+            // cria vínculo
+            await _professionalServiceService.CreateAsync(new ProfessionalService
             {
-                trackedUser.Credits -= service.Value;
-                if (trackedUser.Credits < 0) trackedUser.Credits = 0;
-            }
-        }
+                ProfessionalId = userId.Value,
+                ServiceId = service.Id
+            });
 
-        await _context.SaveChangesAsync();
+            // incrementa contagem e encerra se necessário
+            var trackedService = await _context.Services.FindAsync(service.Id);
+            if (trackedService is not null)
+            {
+                if (trackedService.Value <= 0) trackedService.Value = cost; // corrige serviços antigos com valor 0
+                trackedService.QuantProfessionals += 1;
+                if (trackedService.QuantProfessionals >= 4)
+                    trackedService.Status = "encerrado";
+            }
+
+            // debita créditos se não for assinante
+            if (!hasSubscription && hasCredits)
+            {
+                var trackedUser = await _context.Users.FindAsync(userId.Value);
+                if (trackedUser is not null)
+                {
+                    trackedUser.Credits -= cost;
+                    if (trackedUser.Credits < 0) trackedUser.Credits = 0;
+                }
+            }
+
+            await _context.SaveChangesAsync();
+            await tx.CommitAsync();
+        }
+        catch
+        {
+            await tx.RollbackAsync();
+            throw;
+        }
 
         // retorna já com telefone liberado
         var updatedService = await _serviceService.GetByIdWithClientAsync(id);
