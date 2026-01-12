@@ -59,14 +59,12 @@ public class ServicesController : ControllerBase
         var service = await _serviceService.GetByIdWithClientAsync(id);
         if (service is null) return NotFound();
 
-        var subscription = await _subscriptionService.GetByUserIdAsync(userId.Value);
-        var hasSubscription = subscription is not null && !string.IsNullOrWhiteSpace(subscription.StripeSubscriptionId);
-
         var alreadyUnlocked = await _context.ProfessionalServices
             .AsNoTracking()
             .AnyAsync(ps => ps.ServiceId == id && ps.ProfessionalId == userId.Value);
 
-        var includePhone = hasSubscription || alreadyUnlocked;
+        // Não libera contato apenas por ser assinante; só se já tiver desbloqueado
+        var includePhone = alreadyUnlocked;
 
         return Ok(ProjectService(service, includePhone));
     }
