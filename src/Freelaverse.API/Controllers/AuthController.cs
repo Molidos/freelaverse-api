@@ -94,6 +94,7 @@ namespace Freelaverse.API.Controllers
                         urgency = s.Urgency,
                         status = s.Status,
                         address = s.Address,
+                        quantProfessionals = s.QuantProfessionals,
                         createdAt = s.CreatedAt,
                         updatedAt = s.UpdatedAt,
                         professionalService = s.ProfessionalService?
