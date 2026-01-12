@@ -258,9 +258,20 @@ public class ServicesController : ControllerBase
         return Ok(updated);
     }
 
+    [Authorize]
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id)
     {
+        var userId = GetUserId();
+        if (userId is null) return Unauthorized();
+
+        var service = await _serviceService.GetByIdAsync(id);
+        if (service is null) return NotFound();
+
+        // Apenas o cliente dono pode apagar o pedido
+        if (service.ClientId != userId.Value)
+            return Forbid();
+
         var removed = await _serviceService.DeleteAsync(id);
         if (!removed) return NotFound();
         return NoContent();
