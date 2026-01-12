@@ -69,7 +69,9 @@ public class StripeController : ControllerBase
         try
         {
             var subscription = await _subscriptionService.GetByUserIdAsync(user.Id);
-            if (subscription?.StripeCustomerId is { Length: > 0 } existingCustomerId)
+            var hasActiveSubscription = !string.IsNullOrWhiteSpace(subscription?.StripeSubscriptionId);
+
+            if (hasActiveSubscription && subscription?.StripeCustomerId is { Length: > 0 } existingCustomerId)
             {
                 // Se já existe cliente (e possivelmente assinatura), abre o Billing Portal
                 var portalService = new BillingPortalSessionService();
@@ -109,6 +111,7 @@ public class StripeController : ControllerBase
                 Mode = "subscription",
                 BillingAddressCollection = "auto",
                 Customer = customerId,
+                CustomerEmail = string.IsNullOrWhiteSpace(customerId) ? user.Email : null,
                 LineItems = new List<CheckoutSessionLineItemOptions>
                 {
                     new CheckoutSessionLineItemOptions
