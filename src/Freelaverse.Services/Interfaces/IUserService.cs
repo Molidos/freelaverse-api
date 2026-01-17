@@ -1,3 +1,4 @@
+using System;
 using FreelaverseApi.Models;
 
 namespace Freelaverse.Services.Interfaces;
@@ -10,6 +11,7 @@ public interface IUserService
     Task<User?> GetByEmailAndPasswordAsync(string email, string password);
     Task<User?> GetByEmailConfirmationTokenAsync(string token);
     Task<User?> MarkEmailConfirmedAsync(User user);
+    Task<User?> RefreshEmailConfirmationTokenAsync(User user, TimeSpan validity);
     Task<User> CreateAsync(User user);
     Task<User?> UpdateAsync(Guid id, User user);
     Task<User?> AddCreditsAsync(Guid id, int creditsToAdd);

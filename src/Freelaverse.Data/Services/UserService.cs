@@ -68,7 +68,7 @@ public class UserService : IUserService
         // configura código de confirmação de email (6 dígitos) para novos cadastros
         user.EmailConfirmed = false;
         user.EmailConfirmationToken = user.EmailConfirmationToken ?? Random.Shared.Next(100000, 999999).ToString();
-        user.EmailConfirmationTokenExpiresAt = user.EmailConfirmationTokenExpiresAt ?? DateTimeOffset.UtcNow.AddMinutes(15);
+        user.EmailConfirmationTokenExpiresAt = user.EmailConfirmationTokenExpiresAt ?? DateTimeOffset.UtcNow.AddMinutes(1);
         user.Password = BCrypt.Net.BCrypt.HashPassword(user.Password);
         _context.Users.Add(user);
         await _context.SaveChangesAsync();
@@ -117,6 +117,17 @@ public class UserService : IUserService
         tracked.EmailConfirmationToken = null;
         tracked.EmailConfirmationTokenExpiresAt = null;
 
+        await _context.SaveChangesAsync();
+        return tracked;
+    }
+
+    public async Task<User?> RefreshEmailConfirmationTokenAsync(User user, TimeSpan validity)
+    {
+        var tracked = await _context.Users.FindAsync(user.Id);
+        if (tracked is null) return null;
+
+        tracked.EmailConfirmationToken = Random.Shared.Next(100000, 999999).ToString();
+        tracked.EmailConfirmationTokenExpiresAt = DateTimeOffset.UtcNow.Add(validity);
         await _context.SaveChangesAsync();
         return tracked;
     }

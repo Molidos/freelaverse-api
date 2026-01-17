@@ -10,7 +10,7 @@ using Microsoft.AspNetCore.Authorization;
 using FreelaverseApi.Data;
 using Stripe;
 using Microsoft.AspNetCore.Http;
-using Freelaverse.API.Models.Auth;
+using System;
 
 namespace Freelaverse.API.Controllers
 {
@@ -213,7 +213,7 @@ namespace Freelaverse.API.Controllers
                 {
                     message = "Cadastro realizado. Enviamos um código de confirmação para seu email.",
                     emailConfirmationSent = true,
-                    expiresInMinutes = 15
+                    expiresInSeconds = 60
                 });
             }
             catch
@@ -222,6 +222,33 @@ namespace Freelaverse.API.Controllers
                 throw;
             }
 
+        }
+
+        [HttpPost("resend-email-confirmation")]
+        [AllowAnonymous]
+        public async Task<ActionResult> ResendEmailConfirmation([FromBody] ResendEmailConfirmationRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Email))
+                return BadRequest(new { message = "Email é obrigatório." });
+
+            var user = await _userService.GetByEmailAsync(request.Email);
+            if (user is null)
+                return NotFound(new { message = "Usuário não encontrado." });
+
+            if (user.EmailConfirmed)
+                return Ok(new { message = "Email já confirmado. Faça login." });
+
+            var refreshed = await _userService.RefreshEmailConfirmationTokenAsync(user, TimeSpan.FromMinutes(1));
+            if (refreshed?.EmailConfirmationToken is null)
+                return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Não foi possível gerar um novo código. Tente novamente." });
+
+            await _emailService.SendEmailConfirmationCodeAsync(refreshed, refreshed.EmailConfirmationToken);
+
+            return Ok(new
+            {
+                message = "Enviamos um novo código para seu email. Ele expira em 1 minuto.",
+                expiresInSeconds = 60
+            });
         }
 
         [HttpPost("login")]
