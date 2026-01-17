@@ -8,6 +8,9 @@ using System.Text;
 using Microsoft.OpenApi.Models;
 using Stripe;
 using Freelaverse.API.Hubs;
+using Freelaverse.API.Options;
+using Freelaverse.API.Services;
+using SendGrid;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -71,10 +74,28 @@ builder.Services.AddSwaggerGen(c =>
         }
     });
 });
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        options.JsonSerializerOptions.DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull;
+    });
 builder.Services.AddSignalR();
 builder.Services.AddAuthorization();
 builder.Services.AddHttpClient();
+builder.Services.Configure<SendGridOptions>(builder.Configuration.GetSection("SendGrid"));
+builder.Services.Configure<FrontendOptions>(builder.Configuration.GetSection("Frontend"));
+
+var sendGridApiKey = builder.Configuration.GetSection("SendGrid")["ApiKey"];
+if (!string.IsNullOrWhiteSpace(sendGridApiKey))
+{
+    builder.Services.AddSingleton<ISendGridClient>(_ => new SendGridClient(sendGridApiKey));
+    builder.Services.AddScoped<IEmailService, SendGridEmailService>();
+}
+else
+{
+    builder.Services.AddSingleton<IEmailService, NoOpEmailService>();
+}
 
 // DbContext
 builder.Services.AddDbContext<FreelaverseApi.Data.AppDbContext>(options =>
