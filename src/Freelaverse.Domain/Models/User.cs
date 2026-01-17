@@ -9,6 +9,9 @@ public class User : IAuditable
     [Required, MaxLength(30)]
     public string Email {get; set;} = string.Empty;
     public string Password {get; set;} = string.Empty;
+    public bool EmailConfirmed { get; set; } = false;
+    public string? EmailConfirmationToken { get; set; }
+    public DateTimeOffset? EmailConfirmationTokenExpiresAt { get; set; }
 
     public UserType UserType { get; set;}
     [Required, MaxLength(120)]

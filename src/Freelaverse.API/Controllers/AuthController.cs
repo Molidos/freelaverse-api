@@ -9,6 +9,8 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.AspNetCore.Authorization;
 using FreelaverseApi.Data;
 using Stripe;
+using Microsoft.AspNetCore.Http;
+using Freelaverse.API.Models.Auth;
 
 namespace Freelaverse.API.Controllers
 {
@@ -22,6 +24,7 @@ namespace Freelaverse.API.Controllers
         private readonly IUserProfessionalAreaService _userProfessionalAreaService;
         private readonly IUserSubscriptionService _userSubscriptionService;
         private readonly AppDbContext _db;
+        private readonly IEmailService _emailService;
 
         public AuthController(
             IUserService userService,
@@ -29,7 +32,8 @@ namespace Freelaverse.API.Controllers
             IProfessionalAreaService professionalAreaService,
             IUserProfessionalAreaService userProfessionalAreaService,
             IUserSubscriptionService userSubscriptionService,
-            AppDbContext db)
+            AppDbContext db,
+            IEmailService emailService)
         {
             _userService = userService;
             _configuration = configuration;
@@ -37,6 +41,7 @@ namespace Freelaverse.API.Controllers
             _userProfessionalAreaService = userProfessionalAreaService;
             _userSubscriptionService = userSubscriptionService;
             _db = db;
+            _emailService = emailService;
         }
 
         [HttpGet("me")]
@@ -73,6 +78,7 @@ namespace Freelaverse.API.Controllers
                 userName = user.UserName,
                 email = user.Email,
                 userType = user.UserType,
+                emailConfirmed = user.EmailConfirmed,
                 credits = user.Credits,
                 subscription = new
                 {
@@ -201,8 +207,14 @@ namespace Freelaverse.API.Controllers
 
                 await transaction.CommitAsync();
 
-                var token = GenerateJwtToken(created);
-                return Ok(new { token, user = new { created.Id, created.Email, created.UserName, created.UserType, created.ProfileImageUrl } });
+                await _emailService.SendEmailConfirmationCodeAsync(created, created.EmailConfirmationToken!);
+
+                return Ok(new
+                {
+                    message = "Cadastro realizado. Enviamos um código de confirmação para seu email.",
+                    emailConfirmationSent = true,
+                    expiresInMinutes = 15
+                });
             }
             catch
             {
@@ -219,6 +231,11 @@ namespace Freelaverse.API.Controllers
             if (user is null)
             {
                 return Unauthorized();
+            }
+
+            if (!user.EmailConfirmed)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Confirme seu email para acessar o sistema." });
             }
 
             var subscription = await _userSubscriptionService.GetByUserIdAsync(user.Id);
@@ -267,6 +284,33 @@ namespace Freelaverse.API.Controllers
             );
 
             return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+        [HttpPost("confirm-email")]
+        [AllowAnonymous]
+        public async Task<ActionResult> ConfirmEmail([FromBody] ConfirmEmailCodeRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Code))
+                return BadRequest(new { message = "Email e código são obrigatórios." });
+
+            var user = await _userService.GetByEmailAsync(request.Email);
+            if (user is null)
+                return NotFound(new { message = "Usuário não encontrado." });
+
+            if (user.EmailConfirmed)
+                return Ok(new { message = "Email já confirmado. Faça login." });
+
+            if (!string.Equals(user.EmailConfirmationToken, request.Code, StringComparison.Ordinal))
+                return BadRequest(new { message = "Código inválido." });
+
+            if (user.EmailConfirmationTokenExpiresAt.HasValue &&
+                user.EmailConfirmationTokenExpiresAt.Value < DateTimeOffset.UtcNow)
+            {
+                return BadRequest(new { message = "Código expirado. Solicite um novo cadastro." });
+            }
+
+            await _userService.MarkEmailConfirmedAsync(user);
+            return Ok(new { message = "Email confirmado com sucesso. Você já pode fazer login." });
         }
 
         private async Task<UserSubscription?> RefreshSubscriptionFromStripe(FreelaverseApi.Models.User user, UserSubscription? subscriptionInfo)

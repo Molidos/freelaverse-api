@@ -8,6 +8,8 @@ public interface IUserService
     Task<User?> GetByIdAsync(Guid id);
     Task<User?> GetByEmailAsync(string email);
     Task<User?> GetByEmailAndPasswordAsync(string email, string password);
+    Task<User?> GetByEmailConfirmationTokenAsync(string token);
+    Task<User?> MarkEmailConfirmedAsync(User user);
     Task<User> CreateAsync(User user);
     Task<User?> UpdateAsync(Guid id, User user);
     Task<User?> AddCreditsAsync(Guid id, int creditsToAdd);
