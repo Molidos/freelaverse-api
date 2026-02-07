@@ -63,20 +63,20 @@ jobs:
           TAG_MIG_CACHE="ghcr.io/molidos/freelaverse-api-migrator:cache"
 
           docker buildx build \
-            --file backend/Dockerfile \
+            --file Dockerfile \
             --build-arg BUILDKIT_INLINE_CACHE=1 \
             --cache-from type=registry,ref=${TAG_API_CACHE} \
             --cache-to type=registry,ref=${TAG_API_CACHE},mode=max \
             --tag "${TAG_API}" \
-            --push backend
+            --push .
 
           docker buildx build \
-            --file backend/Dockerfile.migrator \
+            --file Dockerfile.migrator \
             --build-arg BUILDKIT_INLINE_CACHE=1 \
             --cache-from type=registry,ref=${TAG_MIG_CACHE} \
             --cache-to type=registry,ref=${TAG_MIG_CACHE},mode=max \
             --tag "${TAG_MIG}" \
-            --push backend
+            --push .
 
       - name: Deploy backend + migrate
         shell: bash
