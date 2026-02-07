@@ -6,6 +6,7 @@ using SendGrid;
 using SendGrid.Helpers.Mail;
 using Freelaverse.API.Options;
 using System.Net;
+using Microsoft.Extensions.Logging;
 
 namespace Freelaverse.API.Services;
 
@@ -14,6 +15,7 @@ public class SendGridEmailService : IEmailService
     private readonly ISendGridClient _client;
     private readonly SendGridOptions _options;
     private readonly IWebHostEnvironment _env;
+    private readonly ILogger<SendGridEmailService> _logger;
     private string? _cachedTemplate;
     private string? _cachedLogoHtml;
     private bool _logoFileChecked = false;
@@ -21,11 +23,13 @@ public class SendGridEmailService : IEmailService
     public SendGridEmailService(
         ISendGridClient client,
         IOptions<SendGridOptions> options,
-        IWebHostEnvironment env)
+        IWebHostEnvironment env,
+        ILogger<SendGridEmailService> logger)
     {
         _client = client;
         _options = options.Value;
         _env = env;
+        _logger = logger;
     }
 
     public async Task SendEmailConfirmationCodeAsync(User user, string code)
@@ -50,7 +54,18 @@ public class SendGridEmailService : IEmailService
 
         msg.AddTo(new EmailAddress(user.Email, user.UserName));
 
-        await _client.SendEmailAsync(msg);
+        var response = await _client.SendEmailAsync(msg);
+
+        if (response.StatusCode != HttpStatusCode.Accepted)
+        {
+            var body = await response.Body.ReadAsStringAsync();
+            _logger.LogError("SendGrid returned non-accepted status {Status}. Body: {Body}", response.StatusCode, body);
+            throw new InvalidOperationException($"SendGrid failed with status {response.StatusCode}");
+        }
+        else
+        {
+            _logger.LogInformation("SendGrid accepted email to {Email}", user.Email);
+        }
     }
 
     private string BuildHtml(User user, string code)
@@ -63,7 +78,7 @@ public class SendGridEmailService : IEmailService
             .Replace("{{Logo}}", logoBlock)
             .Replace("{{UserName}}", WebUtility.HtmlEncode(user.UserName))
             .Replace("{{Code}}", WebUtility.HtmlEncode(code))
-            .Replace("{{ExpiresMinutes}}", "15");
+            .Replace("{{ExpiresMinutes}}", "1");
     }
 
     private string LoadTemplate()
